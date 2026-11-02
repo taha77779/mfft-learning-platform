@@ -6,12 +6,18 @@ export default function App() {
   const [page, setPage] = useState(
     window.location.hash === '#/admin' ? 'admin' : 'student'
   )
-
+  const [admin, setAdmin] = useState(null)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [admin, setAdmin] = useState(null)
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
+  const [student, setStudent] = useState({
+    name: '',
+    phone: '',
+    age: '',
+    email: ''
+  })
+  const [createdCode, setCreatedCode] = useState('')
 
   useEffect(() => {
     const changePage = () => {
@@ -32,7 +38,7 @@ export default function App() {
     })
 
     if (error) {
-      setMessage('تعذر تسجيل الدخول. تحقق من البريد وكلمة المرور.')
+      setMessage('بيانات الدخول غير صحيحة.')
       setLoading(false)
       return
     }
@@ -45,7 +51,7 @@ export default function App() {
 
     if (profileError || !profile) {
       await supabase.auth.signOut()
-      setMessage('هذا الحساب غير مسجل كمدير للمنصة.')
+      setMessage('هذا الحساب ليس مسجلاً كمدير.')
       setLoading(false)
       return
     }
@@ -54,11 +60,45 @@ export default function App() {
     setLoading(false)
   }
 
-  async function adminLogout() {
+  async function addStudent(e) {
+    e.preventDefault()
+    setLoading(true)
+    setMessage('')
+    setCreatedCode('')
+
+    try {
+      const { data, error } = await supabase.functions.invoke(
+        'admin-create-student',
+        {
+          body: {
+            student_name: student.name.trim(),
+            phone: student.phone.trim(),
+            age: Number(student.age),
+            email: student.email.trim() || null
+          }
+        }
+      )
+
+      if (error) throw error
+      if (!data?.student_code) {
+        throw new Error('لم يتم استلام الرقم التعريفي.')
+      }
+
+      setCreatedCode(data.student_code)
+      setStudent({ name: '', phone: '', age: '', email: '' })
+      setMessage('تمت إضافة الطالب بنجاح.')
+    } catch (error) {
+      setMessage(
+        error.message || 'تعذرت إضافة الطالب. تحقق من الاتصال.'
+      )
+    }
+
+    setLoading(false)
+  }
+
+  async function logout() {
     await supabase.auth.signOut()
     setAdmin(null)
-    setEmail('')
-    setPassword('')
   }
 
   return (
@@ -70,21 +110,7 @@ export default function App() {
 
       {page === 'admin' ? (
         <main style={styles.panel}>
-          {admin ? (
-            <>
-              <h2>لوحة الإدارة</h2>
-              <p>مرحباً {admin.full_name}</p>
-              <div style={styles.grid}>
-                <div style={styles.card}>إدارة الطلاب</div>
-                <div style={styles.card}>إدارة الاختبارات</div>
-                <div style={styles.card}>إدارة الأسئلة والصور</div>
-                <div style={styles.card}>المحاولات والنتائج</div>
-              </div>
-              <button style={styles.button} onClick={adminLogout}>
-                تسجيل الخروج
-              </button>
-            </>
-          ) : (
+          {!admin ? (
             <>
               <h2>دخول المدير</h2>
               <form onSubmit={adminLogin}>
@@ -94,19 +120,94 @@ export default function App() {
                   value={email}
                   onChange={e => setEmail(e.target.value)}
                   required
+                  style={styles.input}
                 />
+
                 <label>كلمة المرور</label>
                 <input
                   type="password"
                   value={password}
                   onChange={e => setPassword(e.target.value)}
                   required
+                  style={styles.input}
                 />
+
                 <button style={styles.button} disabled={loading}>
                   {loading ? 'جارٍ التحقق...' : 'دخول الإدارة'}
                 </button>
               </form>
-              {message && <p style={styles.error}>{message}</p>}
+              {message && <p>{message}</p>}
+            </>
+          ) : (
+            <>
+              <h2>لوحة الإدارة</h2>
+              <p>مرحباً {admin.full_name}</p>
+
+              <h3>إضافة طالب جديد</h3>
+
+              <form onSubmit={addStudent}>
+                <label>اسم الطالب</label>
+                <input
+                  style={styles.input}
+                  value={student.name}
+                  onChange={e =>
+                    setStudent({ ...student, name: e.target.value })
+                  }
+                  required
+                />
+
+                <label>رقم الهاتف</label>
+                <input
+                  style={styles.input}
+                  type="tel"
+                  value={student.phone}
+                  onChange={e =>
+                    setStudent({ ...student, phone: e.target.value })
+                  }
+                  required
+                />
+
+                <label>العمر</label>
+                <input
+                  style={styles.input}
+                  type="number"
+                  min="5"
+                  max="100"
+                  value={student.age}
+                  onChange={e =>
+                    setStudent({ ...student, age: e.target.value })
+                  }
+                  required
+                />
+
+                <label>البريد الإلكتروني (اختياري)</label>
+                <input
+                  style={styles.input}
+                  type="email"
+                  value={student.email}
+                  onChange={e =>
+                    setStudent({ ...student, email: e.target.value })
+                  }
+                />
+
+                <button style={styles.button} disabled={loading}>
+                  {loading ? 'جارٍ الإضافة...' : 'إضافة الطالب'}
+                </button>
+              </form>
+
+              {message && <p style={styles.message}>{message}</p>}
+
+              {createdCode && (
+                <div style={styles.result}>
+                  <h3>الرقم التعريفي للطالب</h3>
+                  <strong>{createdCode}</strong>
+                  <p>احتفظ بهذا الرقم لتسليمه للطالب.</p>
+                </div>
+              )}
+
+              <button style={styles.logout} onClick={logout}>
+                تسجيل الخروج
+              </button>
             </>
           )}
         </main>
@@ -114,7 +215,7 @@ export default function App() {
         <main style={styles.panel}>
           <h2>دخول الطالب</h2>
           <p>مرحباً بك في منصة اختبار MFFT.</p>
-          <p>سيتم تجهيز تسجيل دخول الطلاب بعد إعداد التحقق الآمن من بياناتهم.</p>
+          <p>سيتم تفعيل دخول الطلاب بعد تجهيز خدمة التحقق الآمن.</p>
         </main>
       )}
 
@@ -136,38 +237,57 @@ const styles = {
     background: '#123b5d',
     color: 'white',
     textAlign: 'center',
-    padding: '28px 15px'
+    padding: '25px'
   },
   panel: {
     background: 'white',
     maxWidth: '520px',
-    margin: '35px auto',
+    margin: '30px auto',
     padding: '25px',
     borderRadius: '14px',
     boxShadow: '0 3px 15px #0001'
   },
-  grid: {
-    display: 'grid',
-    gridTemplateColumns: '1fr 1fr',
-    gap: '12px',
-    margin: '25px 0'
-  },
-  card: {
-    background: '#eaf2f8',
-    padding: '20px 10px',
-    borderRadius: '10px',
-    textAlign: 'center'
+  input: {
+    display: 'block',
+    width: '100%',
+    boxSizing: 'border-box',
+    padding: '12px',
+    margin: '8px 0 18px',
+    border: '1px solid #cbd5e1',
+    borderRadius: '7px'
   },
   button: {
     width: '100%',
     padding: '13px',
-    marginTop: '18px',
     background: '#176b87',
     color: 'white',
     border: 'none',
     borderRadius: '8px',
-    cursor: 'pointer'
+    cursor: 'pointer',
+    marginTop: '12px'
   },
-  error: { color: '#c0392b', marginTop: '15px' },
-  footer: { textAlign: 'center', padding: '20px' }
+  message: {
+    marginTop: '15px',
+    color: '#176b87'
+  },
+  result: {
+    marginTop: '20px',
+    padding: '18px',
+    background: '#e7f5ec',
+    borderRadius: '10px',
+    textAlign: 'center'
+  },
+  logout: {
+    width: '100%',
+    padding: '12px',
+    marginTop: '20px',
+    background: '#64748b',
+    color: 'white',
+    border: 'none',
+    borderRadius: '8px'
+  },
+  footer: {
+    textAlign: 'center',
+    padding: '20px'
+  }
 }
