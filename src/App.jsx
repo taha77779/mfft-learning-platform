@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from 'react'
 import { supabase } from './supabase.js'
 
@@ -86,6 +85,15 @@ export default function App() {
   )
   const [correctIndex, setCorrectIndex] = useState(0)
   const [questions, setQuestions] = useState([])
+
+  // حالة اختبار الطالب
+  const [studentTestData, setStudentTestData] = useState(null)
+  const [attemptId, setAttemptId] = useState('')
+  const [testStarted, setTestStarted] = useState(false)
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0)
+  const [testFinished, setTestFinished] = useState(false)
+  const [answerLoading, setAnswerLoading] = useState(false)
+  const [testMessage, setTestMessage] = useState('')
 
   useEffect(() => {
     const changePage = () => {
@@ -492,7 +500,123 @@ export default function App() {
     setStudentSession(null)
     setStudentCode('')
     setStudentPhone('')
+    setStudentTestData(null)
+    setAttemptId('')
+    setTestStarted(false)
+    setCurrentQuestionIndex(0)
+    setTestFinished(false)
+    setTestMessage('')
     setMessage('تم تسجيل الخروج من الواجهة.')
+  }
+
+  async function callStudentTest(actionData) {
+    if (!studentSession?.token) {
+      throw new Error('انتهت جلسة الطالب. سجّل الدخول من جديد.')
+    }
+
+    const { data, error } = await supabase.functions.invoke('student-test', {
+      body: {
+        ...actionData,
+        token: studentSession.token
+      }
+    })
+
+    if (error) throw error
+    if (data?.error) throw new Error(data.error)
+    return data
+  }
+
+  async function prepareStudentTest() {
+    setLoading(true)
+    setMessage('')
+    setTestMessage('')
+
+    try {
+      const data = await callStudentTest({ action: 'start' })
+
+      if (!data?.success || !data.attempt_id || !Array.isArray(data.questions)) {
+        throw new Error('لم تصل بيانات الاختبار بالشكل المتوقع.')
+      }
+
+      if (data.questions.length === 0) {
+        throw new Error('لا توجد أسئلة في الاختبار النشط حالياً.')
+      }
+
+      setStudentTestData(data)
+      setAttemptId(data.attempt_id)
+      setCurrentQuestionIndex(0)
+      setTestStarted(false)
+      setTestFinished(false)
+      setTestMessage('تم تحميل الاختبار. اقرأ التعليمات ثم اضغط «ابدأ الاختبار».')
+    } catch (error) {
+      setMessage(error.message || 'تعذر تحميل الاختبار.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function beginStudentTest() {
+    if (!studentTestData?.questions?.length || !attemptId) return
+
+    setLoading(true)
+    setTestMessage('')
+
+    try {
+      const firstQuestion = studentTestData.questions[0]
+      await callStudentTest({
+        action: 'present',
+        attempt_id: attemptId,
+        question_id: firstQuestion.id
+      })
+      setTestStarted(true)
+      setCurrentQuestionIndex(0)
+      setTestMessage('')
+    } catch (error) {
+      setTestMessage(error.message || 'تعذر بدء السؤال الأول.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function submitStudentAnswer(optionId) {
+    const currentQuestion = studentTestData?.questions?.[currentQuestionIndex]
+    if (!currentQuestion || !attemptId || answerLoading) return
+
+    setAnswerLoading(true)
+    setTestMessage('')
+
+    try {
+      const result = await callStudentTest({
+        action: 'answer',
+        attempt_id: attemptId,
+        question_id: currentQuestion.id,
+        option_id: optionId
+      })
+
+      if (result?.is_correct && result?.question_completed) {
+        const nextIndex = currentQuestionIndex + 1
+        const nextQuestion = studentTestData.questions[nextIndex]
+
+        if (nextQuestion) {
+          await callStudentTest({
+            action: 'present',
+            attempt_id: attemptId,
+            question_id: nextQuestion.id
+          })
+          setCurrentQuestionIndex(nextIndex)
+          setTestMessage('إجابة صحيحة. انتقل إلى السؤال التالي.')
+        } else {
+          setTestFinished(true)
+          setTestMessage('أكملت جميع الأسئلة، وتم تسجيل إجاباتك.')
+        }
+      } else {
+        setTestMessage('هذه ليست الإجابة الصحيحة. حاول مرة أخرى.')
+      }
+    } catch (error) {
+      setTestMessage(error.message || 'تعذر تسجيل الإجابة. حاول مرة أخرى.')
+    } finally {
+      setAnswerLoading(false)
+    }
   }
 
   return (
@@ -860,10 +984,97 @@ export default function App() {
               <h2>مرحباً {studentSession.student.student_name}</h2>
               <p>تم التحقق من بياناتك بنجاح.</p>
               <p>الرقم التعريفي: {studentSession.student.student_code}</p>
-              <p>
-                تم تسجيل الدخول. ستظهر الاختبارات بعد استكمال ربط واجهة
-                الاختبار وحفظ الاستجابات.
-              </p>
+              {!studentTestData ? (
+                <>
+                  <p>يمكنك تحميل الاختبار النشط والبدء بعد قراءة التعليمات.</p>
+                  <button
+                    type="button"
+                    style={styles.button}
+                    disabled={loading}
+                    onClick={prepareStudentTest}
+                  >
+                    {loading ? 'جارٍ تحميل الاختبار...' : 'تحميل الاختبار'}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <hr />
+                  <h3>{studentTestData.test?.title || 'اختبار MFFT'}</h3>
+
+                  {!testStarted && !testFinished ? (
+                    <>
+                      <p style={{ whiteSpace: 'pre-wrap' }}>
+                        {studentTestData.test?.instructions || 'اقرأ السؤال جيداً، ثم اختر الصورة المطابقة.'}
+                      </p>
+                      <p>عدد الأسئلة: {studentTestData.questions.length}</p>
+                      <button
+                        type="button"
+                        style={styles.button}
+                        disabled={loading}
+                        onClick={beginStudentTest}
+                      >
+                        {loading ? 'جارٍ البدء...' : 'ابدأ الاختبار'}
+                      </button>
+                    </>
+                  ) : testFinished ? (
+                    <div style={styles.result}>
+                      <h3>اكتمل الاختبار</h3>
+                      <p>تم تسجيل إجاباتك لجميع الأسئلة.</p>
+                      <p>
+                        لم تُعرض النتيجة بعد؛ إذ يلزم استكمال خطوة إنهاء المحاولة
+                        وحساب النتائج قبل اعتمادها.
+                      </p>
+                    </div>
+                  ) : (
+                    (() => {
+                      const question = studentTestData.questions[currentQuestionIndex]
+                      if (!question) return <p>تعذر العثور على السؤال الحالي.</p>
+
+                      return (
+                        <>
+                          <h3>
+                            السؤال {currentQuestionIndex + 1} من {studentTestData.questions.length}
+                          </h3>
+                          <img
+                            src={question.stimulus_image_url}
+                            alt="الصورة الأصلية للسؤال"
+                            style={styles.questionImage}
+                          />
+
+                          <p>اختر الصورة التي تطابق الصورة الأصلية:</p>
+                          <div style={styles.imageGrid}>
+                            {question.options.map((option, optionIndex) => (
+                              <button
+                                type="button"
+                                key={option.id}
+                                disabled={answerLoading}
+                                onClick={() => submitStudentAnswer(option.id)}
+                                style={{
+                                  ...styles.optionCard,
+                                  cursor: answerLoading ? 'wait' : 'pointer',
+                                  textAlign: 'center',
+                                  color: '#1e293b',
+                                  font: 'inherit'
+                                }}
+                              >
+                                <img
+                                  src={option.image_url}
+                                  alt={`الاختيار ${optionIndex + 1}`}
+                                  style={styles.optionImage}
+                                />
+                                <strong>الاختيار {optionIndex + 1}</strong>
+                              </button>
+                            ))}
+                          </div>
+                          {answerLoading && <p style={styles.message}>جارٍ تسجيل الإجابة...</p>}
+                        </>
+                      )
+                    })()
+                  )}
+
+                  {testMessage && <p style={styles.message}>{testMessage}</p>}
+                </>
+              )}
 
               <button style={styles.logout} onClick={studentLogout}>
                 تسجيل الخروج
@@ -993,4 +1204,4 @@ const styles = {
     textAlign: 'center',
     padding: '20px'
   }
-}
+          }
