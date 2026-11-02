@@ -18,10 +18,14 @@ export default function App() {
     email: ''
   })
   const [createdCode, setCreatedCode] = useState('')
+  const [studentCode, setStudentCode] = useState('')
+  const [studentPhone, setStudentPhone] = useState('')
+  const [studentSession, setStudentSession] = useState(null)
 
   useEffect(() => {
     const changePage = () => {
       setPage(window.location.hash === '#/admin' ? 'admin' : 'student')
+      setMessage('')
     }
     window.addEventListener('hashchange', changePage)
     return () => window.removeEventListener('hashchange', changePage)
@@ -88,12 +92,51 @@ export default function App() {
       setStudent({ name: '', phone: '', age: '', email: '' })
       setMessage('تمت إضافة الطالب بنجاح.')
     } catch (error) {
+      setMessage(error.message || 'تعذرت إضافة الطالب.')
+    }
+
+    setLoading(false)
+  }
+
+  async function studentLogin(e) {
+    e.preventDefault()
+    setLoading(true)
+    setMessage('')
+    setStudentSession(null)
+
+    try {
+      const { data, error } = await supabase.functions.invoke(
+        'student-login',
+        {
+          body: {
+            student_code: studentCode.trim().toUpperCase(),
+            phone: studentPhone.trim()
+          }
+        }
+      )
+
+      if (error) throw error
+
+      if (!data?.success || !data?.token || !data?.student) {
+        throw new Error(data?.error || 'تعذر تسجيل الدخول.')
+      }
+
+      setStudentSession(data)
+      setMessage('تم تسجيل الدخول بنجاح.')
+    } catch (error) {
       setMessage(
-        error.message || 'تعذرت إضافة الطالب. تحقق من الاتصال.'
+        error.message || 'تعذر تسجيل الدخول. تحقق من الرقم والهاتف.'
       )
     }
 
     setLoading(false)
+  }
+
+  function studentLogout() {
+    setStudentSession(null)
+    setStudentCode('')
+    setStudentPhone('')
+    setMessage('تم تسجيل الخروج.')
   }
 
   async function logout() {
@@ -213,9 +256,49 @@ export default function App() {
         </main>
       ) : (
         <main style={styles.panel}>
-          <h2>دخول الطالب</h2>
-          <p>مرحباً بك في منصة اختبار MFFT.</p>
-          <p>سيتم تفعيل دخول الطلاب بعد تجهيز خدمة التحقق الآمن.</p>
+          {!studentSession ? (
+            <>
+              <h2>دخول الطالب</h2>
+              <p>أدخل الرقم التعريفي ورقم الهاتف المسجل لدى الإدارة.</p>
+
+              <form onSubmit={studentLogin}>
+                <label>الرقم التعريفي</label>
+                <input
+                  style={styles.input}
+                  value={studentCode}
+                  onChange={e => setStudentCode(e.target.value)}
+                  placeholder="MFFT-XXXXXXXX"
+                  required
+                />
+
+                <label>رقم الهاتف</label>
+                <input
+                  style={styles.input}
+                  type="tel"
+                  value={studentPhone}
+                  onChange={e => setStudentPhone(e.target.value)}
+                  required
+                />
+
+                <button style={styles.button} disabled={loading}>
+                  {loading ? 'جارٍ التحقق...' : 'دخول الطالب'}
+                </button>
+              </form>
+
+              {message && <p style={styles.message}>{message}</p>}
+            </>
+          ) : (
+            <>
+              <h2>مرحباً {studentSession.student.student_name}</h2>
+              <p>تم التحقق من بياناتك بنجاح.</p>
+              <p>الرقم التعريفي: {studentSession.student.student_code}</p>
+              <p>سيظهر الاختبار هنا بعد استكمال ربط نظام الاختبارات.</p>
+
+              <button style={styles.logout} onClick={studentLogout}>
+                تسجيل الخروج
+              </button>
+            </>
+          )}
         </main>
       )}
 
