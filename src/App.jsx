@@ -11,16 +11,19 @@ export default function App() {
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
+
   const [student, setStudent] = useState({
-    name: '',
-    phone: '',
-    age: '',
-    email: ''
+    name: '', phone: '', age: '', email: ''
   })
   const [createdCode, setCreatedCode] = useState('')
   const [studentCode, setStudentCode] = useState('')
   const [studentPhone, setStudentPhone] = useState('')
   const [studentSession, setStudentSession] = useState(null)
+
+  const [tests, setTests] = useState([])
+  const [testTitle, setTestTitle] = useState('')
+  const [testInstructions, setTestInstructions] = useState('')
+  const [editingId, setEditingId] = useState(null)
 
   useEffect(() => {
     const changePage = () => {
@@ -31,14 +34,17 @@ export default function App() {
     return () => window.removeEventListener('hashchange', changePage)
   }, [])
 
+  useEffect(() => {
+    if (admin) loadTests()
+  }, [admin])
+
   async function adminLogin(e) {
     e.preventDefault()
     setLoading(true)
     setMessage('')
 
     const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password
+      email, password
     })
 
     if (error) {
@@ -84,9 +90,7 @@ export default function App() {
       )
 
       if (error) throw error
-      if (!data?.student_code) {
-        throw new Error('لم يتم استلام الرقم التعريفي.')
-      }
+      if (!data?.student_code) throw new Error('لم يتم استلام الرقم التعريفي.')
 
       setCreatedCode(data.student_code)
       setStudent({ name: '', phone: '', age: '', email: '' })
@@ -116,7 +120,6 @@ export default function App() {
       )
 
       if (error) throw error
-
       if (!data?.success || !data?.token || !data?.student) {
         throw new Error(data?.error || 'تعذر تسجيل الدخول.')
       }
@@ -124,12 +127,100 @@ export default function App() {
       setStudentSession(data)
       setMessage('تم تسجيل الدخول بنجاح.')
     } catch (error) {
-      setMessage(
-        error.message || 'تعذر تسجيل الدخول. تحقق من الرقم والهاتف.'
-      )
+      setMessage(error.message || 'تعذر تسجيل الدخول.')
     }
 
     setLoading(false)
+  }
+
+  async function loadTests() {
+    const { data, error } = await supabase
+      .from('mfft_tests')
+      .select('id, title, instructions, is_active, created_at')
+      .order('created_at', { ascending: false })
+
+    if (error) {
+      setMessage('تعذر تحميل الاختبارات: ' + error.message)
+      return
+    }
+
+    setTests(data || [])
+  }
+
+  async function saveTest(e) {
+    e.preventDefault()
+    setLoading(true)
+    setMessage('')
+
+    try {
+      const values = {
+        title: testTitle.trim(),
+        instructions: testInstructions.trim()
+      }
+
+      if (!values.title) throw new Error('أدخل عنوان الاختبار.')
+
+      let result
+
+      if (editingId) {
+        result = await supabase
+          .from('mfft_tests')
+          .update(values)
+          .eq('id', editingId)
+      } else {
+        result = await supabase
+          .from('mfft_tests')
+          .insert({
+            ...values,
+            is_active: false,
+            created_by: admin.id
+          })
+      }
+
+      if (result.error) throw result.error
+
+      setTestTitle('')
+      setTestInstructions('')
+      setEditingId(null)
+      setMessage(editingId ? 'تم تحديث الاختبار.' : 'تم إنشاء الاختبار.')
+      await loadTests()
+    } catch (error) {
+      setMessage(error.message || 'تعذر حفظ الاختبار.')
+    }
+
+    setLoading(false)
+  }
+
+  function editTest(test) {
+    setEditingId(test.id)
+    setTestTitle(test.title || '')
+    setTestInstructions(test.instructions || '')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  async function toggleTest(test) {
+    setLoading(true)
+    setMessage('')
+
+    const { error } = await supabase
+      .from('mfft_tests')
+      .update({ is_active: !test.is_active })
+      .eq('id', test.id)
+
+    if (error) {
+      setMessage('تعذر تغيير حالة الاختبار: ' + error.message)
+    } else {
+      setMessage('تم تحديث حالة الاختبار.')
+      await loadTests()
+    }
+
+    setLoading(false)
+  }
+
+  async function logout() {
+    await supabase.auth.signOut()
+    setAdmin(null)
+    setTests([])
   }
 
   function studentLogout() {
@@ -137,11 +228,6 @@ export default function App() {
     setStudentCode('')
     setStudentPhone('')
     setMessage('تم تسجيل الخروج.')
-  }
-
-  async function logout() {
-    await supabase.auth.signOut()
-    setAdmin(null)
   }
 
   return (
@@ -179,13 +265,14 @@ export default function App() {
                   {loading ? 'جارٍ التحقق...' : 'دخول الإدارة'}
                 </button>
               </form>
-              {message && <p>{message}</p>}
+              {message && <p style={styles.message}>{message}</p>}
             </>
           ) : (
             <>
               <h2>لوحة الإدارة</h2>
               <p>مرحباً {admin.full_name}</p>
 
+              <hr />
               <h3>إضافة طالب جديد</h3>
 
               <form onSubmit={addStudent}>
@@ -193,9 +280,7 @@ export default function App() {
                 <input
                   style={styles.input}
                   value={student.name}
-                  onChange={e =>
-                    setStudent({ ...student, name: e.target.value })
-                  }
+                  onChange={e => setStudent({ ...student, name: e.target.value })}
                   required
                 />
 
@@ -204,9 +289,7 @@ export default function App() {
                   style={styles.input}
                   type="tel"
                   value={student.phone}
-                  onChange={e =>
-                    setStudent({ ...student, phone: e.target.value })
-                  }
+                  onChange={e => setStudent({ ...student, phone: e.target.value })}
                   required
                 />
 
@@ -217,9 +300,7 @@ export default function App() {
                   min="5"
                   max="100"
                   value={student.age}
-                  onChange={e =>
-                    setStudent({ ...student, age: e.target.value })
-                  }
+                  onChange={e => setStudent({ ...student, age: e.target.value })}
                   required
                 />
 
@@ -228,9 +309,7 @@ export default function App() {
                   style={styles.input}
                   type="email"
                   value={student.email}
-                  onChange={e =>
-                    setStudent({ ...student, email: e.target.value })
-                  }
+                  onChange={e => setStudent({ ...student, email: e.target.value })}
                 />
 
                 <button style={styles.button} disabled={loading}>
@@ -238,14 +317,92 @@ export default function App() {
                 </button>
               </form>
 
-              {message && <p style={styles.message}>{message}</p>}
-
               {createdCode && (
                 <div style={styles.result}>
                   <h3>الرقم التعريفي للطالب</h3>
                   <strong>{createdCode}</strong>
                   <p>احتفظ بهذا الرقم لتسليمه للطالب.</p>
                 </div>
+              )}
+
+              <hr />
+              <h3>إدارة الاختبارات</h3>
+
+              <form onSubmit={saveTest}>
+                <label>عنوان الاختبار</label>
+                <input
+                  style={styles.input}
+                  value={testTitle}
+                  onChange={e => setTestTitle(e.target.value)}
+                  placeholder="مثلاً: اختبار MFFT"
+                  required
+                />
+
+                <label>تعليمات الاختبار</label>
+                <textarea
+                  style={{ ...styles.input, minHeight: 110 }}
+                  value={testInstructions}
+                  onChange={e => setTestInstructions(e.target.value)}
+                  placeholder="اكتب تعليمات الاختبار للطلاب..."
+                />
+
+                <button style={styles.button} disabled={loading}>
+                  {loading
+                    ? 'جارٍ الحفظ...'
+                    : editingId
+                      ? 'حفظ التعديلات'
+                      : 'إنشاء اختبار'}
+                </button>
+
+                {editingId && (
+                  <button
+                    type="button"
+                    style={styles.logout}
+                    onClick={() => {
+                      setEditingId(null)
+                      setTestTitle('')
+                      setTestInstructions('')
+                    }}
+                  >
+                    إلغاء التعديل
+                  </button>
+                )}
+              </form>
+
+              {message && <p style={styles.message}>{message}</p>}
+
+              <h3>الاختبارات المسجلة ({tests.length})</h3>
+
+              {tests.length === 0 ? (
+                <p>لا توجد اختبارات حتى الآن.</p>
+              ) : (
+                tests.map(test => (
+                  <div key={test.id} style={styles.testCard}>
+                    <h4>{test.title}</h4>
+                    <p>{test.instructions || 'لا توجد تعليمات.'}</p>
+                    <p>
+                      الحالة:{' '}
+                      <strong>
+                        {test.is_active ? 'نشط' : 'غير نشط'}
+                      </strong>
+                    </p>
+
+                    <button
+                      style={styles.smallButton}
+                      onClick={() => editTest(test)}
+                    >
+                      تعديل
+                    </button>
+
+                    <button
+                      style={styles.smallButton}
+                      disabled={loading}
+                      onClick={() => toggleTest(test)}
+                    >
+                      {test.is_active ? 'تعطيل' : 'تفعيل'}
+                    </button>
+                  </div>
+                ))
               )}
 
               <button style={styles.logout} onClick={logout}>
@@ -292,8 +449,7 @@ export default function App() {
               <h2>مرحباً {studentSession.student.student_name}</h2>
               <p>تم التحقق من بياناتك بنجاح.</p>
               <p>الرقم التعريفي: {studentSession.student.student_code}</p>
-              <p>سيظهر الاختبار هنا بعد استكمال ربط نظام الاختبارات.</p>
-
+              <p>سيظهر الاختبار هنا بعد استكمال نظام الأسئلة.</p>
               <button style={styles.logout} onClick={studentLogout}>
                 تسجيل الخروج
               </button>
@@ -348,6 +504,20 @@ const styles = {
     borderRadius: '8px',
     cursor: 'pointer',
     marginTop: '12px'
+  },
+  smallButton: {
+    padding: '9px 14px',
+    margin: '5px',
+    background: '#176b87',
+    color: 'white',
+    border: 'none',
+    borderRadius: '7px'
+  },
+  testCard: {
+    border: '1px solid #cbd5e1',
+    borderRadius: '9px',
+    padding: '14px',
+    margin: '12px 0'
   },
   message: {
     marginTop: '15px',
